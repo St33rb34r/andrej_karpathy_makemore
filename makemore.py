@@ -1,5 +1,6 @@
 import torch
-from typing import List
+import torch.nn.functional as F
+from typing import List, Union
 
 
 class Bigram:
@@ -95,4 +96,82 @@ class Bigram:
     def __repr__(self):
         i, j = self.N.shape
         return f"Bigram-model of token size: ({i}x{j}), smoothing: {self.smoothing}"
+
+
+class BigramNeuralNet:
+
+    def __init__(self, file):
+        self.file: str = file
+
+        self.chars = None
+        self.s2i = None
+        self.i2s = None
+
+        self.W: Union[torch.Tensor, None] = None
+        self.xs = None
+        self.xy = None
+
+        self._parse_file()
+
+    def _parse_file(self):
+        words = open(self.file, 'r').read().splitlines()
+
+        xs, ys = [], []
+
+        self.chars = ['.'] + sorted(list(set(''.join(words))))
+        self.s2i = {s: i for i, s in enumerate(self.chars)}
+        self.i2s = {i: s for i, s in enumerate(self.chars)}
+
+        n = len(self.chars)
+        self.W = torch.randn((n, n), requires_grad=True)
+
+        for w in words:
+            chs = ['.'] + list(w) + ['w']
+            for ch1, ch2 in zip(chs, chs[1:]):
+                ix1 = self.s2i[ch1]
+                ix2 = self.s2i[ch2]
+
+                xs.append(ix1)
+                ys.append(ix2)
+
+        self.xs = torch.tensor(xs)
+        self.ys = torch.tensor(ys)
+
+    def train(self, epochs=10, lr=10):
+
+        for _ in range(epochs):
+            xenc = F.one_hot(self.xs, num_classes=27).float();
+            out = xenc @ self.W
+            a = torch.exp(out)
+            prob = a / a.sum(1, keepdim=True)
+            nlls = -prob[torch.arange(228146), self.ys].log().mean()
+            print(nlls)
+
+            # Backward
+            self.W.grad = None
+            nlls.backward()
+            self.W.data -= lr * self.W.grad
+
+    def generate(self, n: int):
+        names = {}
+        for i in range(n):
+            word = '.'
+            idx = self.s2i[word]
+            count = 0
+            while True:
+                xenc = F.one_hot(torch.tensor(idx), num_classes=27).float();
+                out = xenc @ self.W
+                a = torch.exp(out)
+                pdist = a / a.sum()
+
+                idx = torch.multinomial(pdist, num_samples=1, replacement=True).item()
+                cha = self.i2s[idx]
+                word += cha
+                if cha == '.' or count == 100:
+                    break
+                count += 1
+            names[i] = word
+        return names
+
+
 
